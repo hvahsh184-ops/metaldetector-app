@@ -1,229 +1,246 @@
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.gridlayout import GridLayout
 from kivy.uix.label import Label
 from kivy.uix.button import Button
 from kivy.uix.camera import Camera
-from kivy.uix.scrollview import ScrollView
-from kivy.uix.spinner import Spinner
+from kivy.uix.image import Image
+from kivy.garden.mapview import MapView, MapMarker
 from kivy.clock import Clock
 from kivy.core.window import Window
+from kivy.uix.popup import Popup
 import numpy as np
 from datetime import datetime
+import json
 import os
 
 Window.size = (540, 960)
 
 try:
     from android.permissions import request_permissions, Permission
+    from android.runnable import run_on_ui_thread
     request_permissions([
         Permission.CAMERA,
         Permission.ACCESS_FINE_LOCATION,
         Permission.ACCESS_COARSE_LOCATION,
         Permission.RECORD_AUDIO,
         Permission.INTERNET,
-        Permission.ACCESS_NETWORK_STATE,
-        Permission.MODIFY_AUDIO_SETTINGS,
-        Permission.ACCESS_BACKGROUND_LOCATION,
-        Permission.POST_NOTIFICATIONS,
-        Permission.BODY_SENSORS
+        Permission.BODY_SENSORS,
+        Permission.POST_NOTIFICATIONS
     ])
 except:
     pass
 
-DB = {
-    "1": {"name": "تهران مرکزی", "metals": [
-        {"t": "💎 طلا", "d": 1.5, "c": 92},
-        {"t": "💎 نقره", "d": 1.2, "c": 88},
-        {"t": "⚙️ آهن", "d": 0.9, "c": 95},
-        {"t": "⚙️ برنز", "d": 2.8, "c": 80},
-        {"t": "⚙️ مس", "d": 2.1, "c": 85},
-        {"t": "⚙️ سرب", "d": 3.2, "c": 82},
-        {"t": "🏗️ ساروج", "d": 0.5, "c": 75},
-        {"t": "🏺 سفال", "d": 0.8, "c": 70}
-    ]},
-    "2": {"name": "شمال تهران", "metals": [
-        {"t": "💎 نقره", "d": 1.2, "c": 88},
-        {"t": "⚙️ برنز", "d": 2.8, "c": 80},
-        {"t": "🏗️ ساروج", "d": 0.6, "c": 73},
-        {"t": "🏺 سفال", "d": 0.9, "c": 72}
-    ]},
-    "3": {"name": "شرق تهران", "metals": [
-        {"t": "💎 طلا", "d": 2.5, "c": 91},
-        {"t": "⚙️ سرب", "d": 3.2, "c": 82},
-        {"t": "🏗️ ساروج", "d": 0.7, "c": 76},
-        {"t": "🏺 سفال", "d": 1.0, "c": 74}
-    ]}
+METALS_DB = {
+    "طلا": {"icon": "💎", "depth": 1.5, "signal": 92, "color": (1, 0.84, 0)},
+    "نقره": {"icon": "🪙", "depth": 1.2, "signal": 88, "color": (0.75, 0.75, 0.75)},
+    "آهن": {"icon": "⚙️", "depth": 0.9, "signal": 95, "color": (0.5, 0.5, 0.5)},
+    "برنز": {"icon": "🔔", "depth": 2.8, "signal": 80, "color": (0.8, 0.5, 0.2)},
+    "مس": {"icon": "🧵", "depth": 2.1, "signal": 85, "color": (0.88, 0.5, 0.14)},
+    "سرب": {"icon": "⚱️", "depth": 3.2, "signal": 82, "color": (0.3, 0.3, 0.3)},
+    "ساروج": {"icon": "🧱", "depth": 0.5, "signal": 75, "color": (0.8, 0.4, 0.2)},
+    "سفال": {"icon": "🏺", "depth": 0.8, "signal": 70, "color": (0.6, 0.3, 0.1)}
 }
 
-class SensorData:
+class SensorMonitor:
     def __init__(self):
-        self.accel = {"x": 0, "y": 0, "z": 0}
-        self.magnet = {"x": 0, "y": 0, "z": 0}
-        self.gyro = {"x": 0, "y": 0, "z": 0}
-        self.pressure = 0
-        self.temperature = 0
-        self.proximity = 0
-        self.light = 0
-        self.lat = 0
-        self.lon = 0
-        self.alt = 0
-        self.accuracy = 0
+        self.accel_x = 0
+        self.accel_y = 0
+        self.accel_z = 9.8
+        self.mag_x = 0
+        self.mag_y = 0
+        self.mag_z = 0
+        self.gyro_x = 0
+        self.pressure = 1013
+        self.temp = 25
+        self.lat = 35.6892
+        self.lon = 51.3890
+        self.alt = 1000
+        self.accuracy = 10
 
 class MetalDetectorApp(App):
     def build(self):
+        self.sensors = SensorMonitor()
         self.detections = []
         self.scanning = False
-        self.region = "1"
-        self.sensors = SensorData()
         
-        root = BoxLayout(orientation='vertical', padding=10, spacing=5)
+        # لایه اصلی
+        main_box = BoxLayout(orientation='vertical', padding=5, spacing=5)
         
-        root.add_widget(Label(
-            text='🔍 فلزیاب | Metal Detector\n📡 تمام سنسورها',
-            size_hint_y=0.07,
-            font_size='16sp',
-            bold=True
-        ))
-        
-        region_box = BoxLayout(size_hint_y=0.06, spacing=10)
-        region_box.add_widget(Label(text='منطقه:', size_hint_x=0.2, bold=True))
-        spinner = Spinner(
-            text='تهران مرکزی',
-            values=('تهران مرکزی', 'شمال تهران', 'شرق تهران'),
-            size_hint_x=0.8
+        # هدر
+        header = Label(
+            text='🔍 فلزیاب حرفه‌ای | Metal Detector',
+            size_hint_y=0.06,
+            font_size='14sp',
+            bold=True,
+            color=(0, 1, 1, 1)
         )
-        spinner.bind(text=self.on_region_select)
-        region_box.add_widget(spinner)
-        root.add_widget(region_box)
+        main_box.add_widget(header)
         
+        # دوربین (پایین)
         try:
-            self.camera = Camera(resolution=(640, 480), play=True, size_hint_y=0.25)
-            root.add_widget(self.camera)
+            self.camera = Camera(resolution=(640, 480), play=True, size_hint_y=0.35)
+            main_box.add_widget(self.camera)
         except:
-            root.add_widget(Label(text='📷 دوربین فعال نیست', size_hint_y=0.25))
+            main_box.add_widget(Label(text='📷 دوربین غیرفعال', size_hint_y=0.35))
         
-        btn_box = BoxLayout(size_hint_y=0.08, spacing=5)
+        # نقشه (بالا) - آفلاین
+        try:
+            self.mapview = MapView(
+                zoom=16,
+                lat=self.sensors.lat,
+                lon=self.sensors.lon,
+                size_hint_y=0.25
+            )
+            main_box.add_widget(self.mapview)
+        except:
+            main_box.add_widget(Label(text='🗺️ نقشه آفلاین', size_hint_y=0.25))
+        
+        # کنترل‌ها
+        ctrl_box = BoxLayout(size_hint_y=0.08, spacing=5)
         
         start_btn = Button(text='▶️ شروع', background_color=(0, 1, 0, 1))
-        start_btn.bind(on_press=self.start_detection)
-        btn_box.add_widget(start_btn)
+        start_btn.bind(on_press=self.start_scan)
+        ctrl_box.add_widget(start_btn)
         
         stop_btn = Button(text='⏹️ توقف', background_color=(1, 0, 0, 1))
-        stop_btn.bind(on_press=self.stop_detection)
-        btn_box.add_widget(stop_btn)
+        stop_btn.bind(on_press=self.stop_scan)
+        ctrl_box.add_widget(stop_btn)
         
-        sensors_btn = Button(text='📊 سنسورها', background_color=(0, 0, 1, 1))
-        sensors_btn.bind(on_press=self.show_sensors)
-        btn_box.add_widget(sensors_btn)
+        sensor_btn = Button(text='📊 سنسورها', background_color=(0, 0, 1, 1))
+        sensor_btn.bind(on_press=self.show_sensors)
+        ctrl_box.add_widget(sensor_btn)
         
         clear_btn = Button(text='🗑️ پاک', background_color=(0.5, 0.5, 0.5, 1))
-        clear_btn.bind(on_press=self.clear_history)
-        btn_box.add_widget(clear_btn)
+        clear_btn.bind(on_press=self.clear_data)
+        ctrl_box.add_widget(clear_btn)
         
-        root.add_widget(btn_box)
+        main_box.add_widget(ctrl_box)
         
+        # نتیجه
         self.result_label = Label(
-            text='[منتظر شروع]',
-            size_hint_y=0.12,
-            markup=True
+            text='[منتظر شروع...]',
+            size_hint_y=0.10,
+            markup=True,
+            font_size='12sp'
         )
-        root.add_widget(self.result_label)
+        main_box.add_widget(self.result_label)
         
-        scroll = ScrollView(size_hint_y=0.25)
-        self.history_label = Label(
-            text='[تاریخچه خالی]',
-            size_hint_y=None,
-            markup=True
-        )
-        self.history_label.bind(texture_size=self.history_label.setter('size'))
-        scroll.add_widget(self.history_label)
-        root.add_widget(scroll)
+        # سنسورهای اطراف
+        sensor_grid = GridLayout(cols=4, size_hint_y=0.11, spacing=2)
         
-        Clock.schedule_interval(self.detect_metal, 0.5)
+        self.sensor_labels = {}
+        sensors_info = [
+            ('🧭', 'قطب‌نما'),
+            ('🔵', 'فشار'),
+            ('📐', 'شتاب'),
+            ('🔄', 'ژیرو'),
+            ('📍', 'GPS'),
+            ('🌡️', 'دما'),
+            ('⚡', 'سیگنال'),
+            ('🎯', 'دقت')
+        ]
+        
+        for icon, name in sensors_info:
+            lbl = Label(
+                text=f'{icon}\n0',
+                size_hint=(0.25, 1),
+                font_size='10sp'
+            )
+            sensor_grid.add_widget(lbl)
+            self.sensor_labels[name] = lbl
+        
+        main_box.add_widget(sensor_grid)
+        
+        # زمان‌بند
         Clock.schedule_interval(self.update_sensors, 0.2)
+        Clock.schedule_interval(self.detect, 0.5)
         
-        return root
+        return main_box
     
-    def on_region_select(self, spinner, text):
-        m = {'تهران مرکزی': '1', 'شمال تهران': '2', 'شرق تهران': '3'}
-        self.region = m[text]
+    def update_sensors(self, dt):
+        self.sensors.accel_x = np.random.uniform(-5, 5)
+        self.sensors.accel_y = np.random.uniform(-5, 5)
+        self.sensors.accel_z = np.random.uniform(8, 11)
+        self.sensors.mag_x = np.random.uniform(-50, 50)
+        self.sensors.mag_y = np.random.uniform(-50, 50)
+        self.sensors.mag_z = np.random.uniform(-50, 50)
+        self.sensors.gyro_x = np.random.uniform(-5, 5)
+        self.sensors.pressure = np.random.uniform(980, 1050)
+        self.sensors.temp = np.random.uniform(20, 30)
+        self.sensors.lat += np.random.uniform(-0.0001, 0.0001)
+        self.sensors.lon += np.random.uniform(-0.0001, 0.0001)
+        self.sensors.alt = np.random.uniform(900, 1100)
+        self.sensors.accuracy = np.random.uniform(5, 15)
+        
+        # بروزرسانی برچسب‌ها
+        self.sensor_labels['قطب‌نما'].text = f"🧭\n{self.sensors.mag_x:.0f}°"
+        self.sensor_labels['فشار'].text = f"🔵\n{self.sensors.pressure:.0f}hPa"
+        self.sensor_labels['شتاب'].text = f"📐\n{self.sensors.accel_z:.1f}g"
+        self.sensor_labels['ژیرو'].text = f"🔄\n{self.sensors.gyro_x:.1f}°/s"
+        self.sensor_labels['GPS'].text = f"📍\n{self.sensors.lat:.2f}"
+        self.sensor_labels['دما'].text = f"🌡️\n{self.sensors.temp:.0f}°C"
+        self.sensor_labels['سیگنال'].text = f"⚡\n{int(np.random.uniform(50, 100))}"
+        self.sensor_labels['دقت'].text = f"🎯\n{self.sensors.accuracy:.0f}m"
     
-    def start_detection(self, instance):
+    def start_scan(self, instance):
         self.scanning = True
-        self.result_label.text = '[color=ffff00]🔄 در حال اسکن...[/color]'
+        self.result_label.text = '[color=ffff00]🔄 درحال اسکن...[/color]'
     
-    def stop_detection(self, instance):
+    def stop_scan(self, instance):
         self.scanning = False
+        self.result_label.text = '[color=ff0000]⏹️ متوقف شد[/color]'
     
-    def clear_history(self, instance):
-        self.detections = []
-        self.history_label.text = '[تاریخچه خالی]'
+    def detect(self, dt):
+        if not self.scanning:
+            return
+        
+        if np.random.random() < 0.15:
+            metal_name = np.random.choice(list(METALS_DB.keys()))
+            metal = METALS_DB[metal_name]
+            
+            detection = {
+                'name': metal_name,
+                'depth': metal['depth'],
+                'signal': metal['signal'],
+                'time': datetime.now().strftime('%H:%M:%S'),
+                'lat': self.sensors.lat,
+                'lon': self.sensors.lon
+            }
+            
+            self.detections.append(detection)
+            
+            self.result_label.text = (
+                f"[b][color=00ff00]✅ تشخیص شد![/color][/b]\n\n"
+                f"{metal['icon']} {metal_name}\n"
+                f"عمق: {metal['depth']:.1f}m | سیگنال: {metal['signal']}%\n"
+                f"📍 {self.sensors.lat:.4f}, {self.sensors.lon:.4f}\n"
+                f"🔵 فشار: {self.sensors.pressure:.0f}hPa\n"
+                f"{detection['time']}"
+            )
+            
+            try:
+                os.system('play -nq -t alsa synth 0.3 sine 1000 2>/dev/null &')
+            except:
+                pass
     
     def show_sensors(self, instance):
         text = (
-            f"📊 داده‌های سنسورها:\n"
-            f"📐 شتاب‌سنج: X={self.sensors.accel['x']:.1f}\n"
-            f"🧭 قطب‌نما: X={self.sensors.magnet['x']:.1f}\n"
-            f"🔄 ژیروسکوپ: X={self.sensors.gyro['x']:.1f}\n"
+            f"📊 داده‌های سنسورها:\n\n"
+            f"🧭 قطب‌نما: {self.sensors.mag_x:.1f}°\n"
+            f"📐 شتاب: X={self.sensors.accel_x:.1f}, Z={self.sensors.accel_z:.1f}g\n"
+            f"🔄 ژیرو: {self.sensors.gyro_x:.1f}°/s\n"
             f"🔵 فشار: {self.sensors.pressure:.0f}hPa\n"
-            f"🌡️ دما: {self.sensors.temperature:.1f}°C\n"
-            f"📍 GPS: {self.sensors.lat:.4f}, {self.sensors.lon:.4f}\n"
-            f"📏 ارتفاع: {self.sensors.alt:.1f}m"
+            f"🌡️ دما: {self.sensors.temp:.1f}°C\n"
+            f"📍 GPS: {self.sensors.lat:.4f}N, {self.sensors.lon:.4f}E\n"
+            f"📏 ارتفاع: {self.sensors.alt:.0f}m\n"
+            f"🎯 دقت: {self.sensors.accuracy:.1f}m"
         )
         self.result_label.text = text
     
-    def update_sensors(self, dt):
-        self.sensors.accel = {"x": np.random.uniform(-10, 10), "y": np.random.uniform(-10, 10), "z": np.random.uniform(8, 12)}
-        self.sensors.magnet = {"x": np.random.uniform(-50, 50), "y": np.random.uniform(-50, 50), "z": np.random.uniform(-50, 50)}
-        self.sensors.gyro = {"x": np.random.uniform(-5, 5), "y": np.random.uniform(-5, 5), "z": np.random.uniform(-5, 5)}
-        self.sensors.pressure = np.random.uniform(980, 1050)
-        self.sensors.temperature = np.random.uniform(15, 35)
-        self.sensors.proximity = np.random.uniform(0, 10)
-        self.sensors.light = np.random.uniform(0, 10000)
-        self.sensors.lat = 35.6892 + np.random.uniform(-0.01, 0.01)
-        self.sensors.lon = 51.3890 + np.random.uniform(-0.01, 0.01)
-        self.sensors.alt = np.random.uniform(500, 1500)
-        self.sensors.accuracy = np.random.uniform(5, 20)
-    
-    def detect_metal(self, dt):
-        if not self.scanning or self.region not in DB:
-            return
-        
-        metals = DB[self.region]['metals']
-        detected = np.random.choice(len(metals), p=[0.1]*len(metals))
-        metal = metals[detected]
-        
-        result = {
-            'type': metal['t'],
-            'depth': metal['d'],
-            'conf': metal['c'],
-            'time': datetime.now().strftime('%H:%M:%S')
-        }
-        
-        self.detections.append(result)
-        
-        try:
-            os.system('play -nq -t alsa synth 0.8 sine 1000 sine 800 2>/dev/null &')
-        except:
-            pass
-        
-        self.result_label.text = (
-            f'[b][color=00ff00]✅ تشخیص شد![/color][/b]\n\n'
-            f'{metal["t"]}\n'
-            f'عمق: {metal["d"]:.1f}m | اطمینان: {metal["c"]}%\n'
-            f'📍 {self.sensors.lat:.4f}, {self.sensors.lon:.4f}\n'
-            f'🔴 مغناطیس: {self.sensors.magnet["x"]:.1f}\n'
-            f'📐 شتاب: {self.sensors.accel["z"]:.1f}\n'
-            f'🔵 فشار: {self.sensors.pressure:.0f}hPa\n'
-            f'{result["time"]}'
-        )
-        
-        history = (
-            f'[b]#{len(self.detections)}[/b] | '
-            f'{metal["t"]} | {metal["c"]}% | '
-            f'{metal["d"]:.1f}m | {result["time"]}\n'
-        )
-        self.history_label.text = history + self.history_label.text
+    def clear_data(self, instance):
+        self.detections = []
+        self.result_label.text = '[color=00ffff]🗑️ پاک شد[/color]'
 
 if __name__ == '__main__':
     MetalDetectorApp().run()
